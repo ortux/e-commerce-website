@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Test Page</title>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body>
+    <h1>Payment Test Page</h1>
+    
+    <h2>Step 1: Login</h2>
+    <form id="loginForm">
+        <label>Email ID:</label>
+        <input type="email" id="email" placeholder="Enter email" required>
+        <br><br>
+        <label>Password:</label>
+        <input type="password" id="password" placeholder="Enter password" required>
+        <br><br>
+        <button type="submit">Login</button>
+    </form>
+    
+    <div id="loginStatus"></div>
+    
+    <hr>
+    
+    <h2>Step 2: Test Payment</h2>
+    <div id="paymentSection" style="display: none;">
+        <label>Product ID:</label>
+        <input type="number" id="productId" placeholder="Enter product ID" value="1">
+        <br><br>
+        <button onclick="initiatePayment()">Start Payment</button>
+        <br><br>
+        <div id="paymentInfo"></div>
+    </div>
+    
+    <hr>
+    
+    <h2>Debug Console</h2>
+    <div id="debugConsole" style="border: 1px solid #ccc; padding: 10px; height: 200px; overflow-y: scroll; font-family: monospace; background-color: #f5f5f5;"></div>
+    
+    <script>
+        let authToken = '';
+        let currentOrderData = null;
+        
+        // Debug function
+        function log(message, type = 'info') {
+            const console = document.getElementById('debugConsole');
+            const time = new Date().toLocaleTimeString();
+            console.innerHTML += `[${time}] ${type.toUpperCase()}: ${message}\n`;
+            console.scrollTop = console.scrollHeight;
+        }
+        
+        // API Base URL - change this to your server URL
+        const API_BASE = 'http://localhost:3000'; // Change port if needed
+        
+        // Login form handler
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            log(`Attempting login for ${email}`);
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/login/user`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email_id: email,
+                        password: password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.token) {
+                    authToken = data.token;
+                    document.getElementById('loginStatus').innerHTML = '<p style="color: green;">Login Successful!</p>';
+                    document.getElementById('paymentSection').style.display = 'block';
+                    log('Login successful, token received');
+                } else {
+                    document.getElementById('loginStatus').innerHTML = '<p style="color: red;">Login Failed: ' + (data.message || data.error || 'Unknown error') + '</p>';
+                    log('Login failed: ' + JSON.stringify(data), 'error');
+                }
+            } catch (error) {
+                log('Login error: ' + error.message, 'error');
+                document.getElementById('loginStatus').innerHTML = '<p style="color: red;">Login Error: ' + error.message + '</p>';
+            }
+        });
+        
+        // Initiate payment
+        async function initiatePayment() {
+            if (!authToken) {
+                alert('Please login first');
+                return;
+            }
+            
+            const productId = document.getElementById('productId').value;
+            if (!productId) {
+                alert('Please enter a product ID');
+                return;
+            }
+            
+            log(`Initiating payment for product ID: ${productId}`);
+            
+            try {
+                const response = await fetch(`${API_BASE}/checkout/${productId}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const orderData = await response.json();
+                
+                if (response.ok && orderData.orderId) {
+                    currentOrderData = orderData;
+                    log('Order created successfully: ' + JSON.stringify(orderData));
+                    
+                    // Display payment info
+                    document.getElementById('paymentInfo').innerHTML = `
+                        <h3>Payment Details:</h3>
+                        <p>Product: ${orderData.product.name}</p>
+                        <p>Description: ${orderData.product.description}</p>
+                        <p>Amount: ₹${orderData.amount / 100}</p>
+                        <p>Order ID: ${orderData.orderId}</p>
+                        <button onclick="openRazorpay()">Pay Now with Razorpay</button>
+                    `;
+                } else {
+                    log('Order creation failed: ' + JSON.stringify(orderData), 'error');
+                    alert('Failed to create order: ' + (orderData.error || 'Unknown error'));
+                }
+            } catch (error) {
+                log('Payment initiation error: ' + error.message, 'error');
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        // Open Razorpay checkout
+        function openRazorpay() {
+            if (!currentOrderData) {
+                alert('No order data available');
+                return;
+            }
+            
+            log('Opening Razorpay checkout');
+            
+            const options = {
+                key: currentOrderData.key,
+                amount: currentOrderData.amount,
+                currency: currentOrderData.currency,
+                name: 'Test Store',
+                description: currentOrderData.product.description,
+                order_id: currentOrderData.orderId,
+                handler: function(response) {
+                    log('Payment successful, verifying...', 'success');
+                    verifyPayment(response);
+                },
+                prefill: {
+                    name: 'Test User',
+                    email: document.getElementById('email').value,
+                    contact: '9999999999'
+                },
+                theme: {
+                    color: '#3399cc'
+                },
+                modal: {
+                    ondismiss: function() {
+                        log('Payment modal closed by user', 'warning');
+                    }
+                }
+            };
+            
+            const rzp = new Razorpay(options);
+            rzp.open();
+        }
+        
+        // Verify payment
+        async function verifyPayment(paymentResponse) {
+            log('Verifying payment: ' + JSON.stringify(paymentResponse));
+            
+            try {
+                const response = await fetch(`${API_BASE}/verify-payment`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        razorpay_order_id: paymentResponse.razorpay_order_id,
+                        razorpay_payment_id: paymentResponse.razorpay_payment_id,
+                        razorpay_signature: paymentResponse.razorpay_signature
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.success) {
+                    log('Payment verification successful!', 'success');
+                    document.getElementById('paymentInfo').innerHTML += `
+                        <div style="background-color: #d4edda; padding: 10px; margin: 10px 0; border: 1px solid #c3e6cb;">
+                            <h4 style="color: #155724;">Payment Successful!</h4>
+                            <p>Payment ID: ${paymentResponse.razorpay_payment_id}</p>
+                            <p>Order ID: ${paymentResponse.razorpay_order_id}</p>
+                        </div>
+                    `;
+                } else {
+                    log('Payment verification failed: ' + JSON.stringify(result), 'error');
+                    document.getElementById('paymentInfo').innerHTML += `
+                        <div style="background-color: #f8d7da; padding: 10px; margin: 10px 0; border: 1px solid #f5c6cb;">
+                            <h4 style="color: #721c24;">Payment Verification Failed!</h4>
+                            <p>${result.message || 'Unknown error'}</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                log('Payment verification error: ' + error.message, 'error');
+                alert('Verification error: ' + error.message);
+            }
+        }
+        
+        // Initial log
+        log('Payment test page loaded');
+        log('Make sure your server is running on the correct port');
+        log('Update API_BASE constant if your server runs on a different port');
+    </script>
+</body>
+</html>
